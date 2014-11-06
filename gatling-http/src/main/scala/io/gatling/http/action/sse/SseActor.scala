@@ -10,7 +10,6 @@ import io.gatling.core.session.Session
 import io.gatling.core.util.TimeHelper.nowMillis
 import io.gatling.core.validation.{ Failure, Success }
 import io.gatling.http.ahc.SseTx
-import io.gatling.http.check.sse.SseCheck
 import io.gatling.http.check.ws.{ ExpectedCount, ExpectedRange, UntilCount }
 
 import scala.collection.mutable
@@ -32,45 +31,20 @@ class SseActor(sseName: String) extends BaseActor with DataWriterClient {
     }
   }
 
-  def setCheck(tx: SseTx, requestName: String, check: SseCheck, next: ActorRef, session: Session, future: Option[ListenableFuture[Unit]]): Unit = {
-    logger.debug(s"setCheck blocking=${check.blocking} timeout=${check.timeout}")
-
-    // schedule timeout
-    scheduler.scheduleOnce(check.timeout) {
-      self ! CheckTimeout(check)
-    }
-
-    val newTx = failPendingCheck(tx, "Check didn't succeed by the time a new one was set up")
-      .applyUpdates(session)
-      .copy(requestName = requestName, start = nowMillis, check = Some(check), next = next)
-    context.become(openState(newTx, future))
-
-    if (!check.blocking) {
-      next ! newTx.session
-    }
-  }
-
   def initialState(future: Option[ListenableFuture[Unit]]): Receive = {
     case OnFuture(future) =>
-      logger.error(s"******************* got the future ${future.hashCode()}")
+      logger.error(s"Initiate state with future #${future.hashCode}")
       context.become(initialState(Some(future)))
 
     case OnSend(tx) =>
       import tx._
-      logger.error("-------------------" + session.userId)
-      logger.debug(s"sse '$requestName' opened and request sent")
+      logger.error(s"sse '$requestName' opened and request sent")
+
       val newSession = session.set(sseName, self)
       val newTx = tx.copy(session = newSession)
 
-      check match {
-        case None =>
-          context.become(openState(newTx, future))
-          next ! newSession
-
-        case Some(c) =>
-          // hack, reset check so that there's no pending one
-          setCheck(newTx.copy(check = None), requestName, c, next, newSession, future)
-      }
+      context.become(openState(newTx, future))
+      next ! newSession
 
     case OnFailedOpen(tx, message, end) =>
       import tx._
@@ -83,6 +57,11 @@ class SseActor(sseName: String) extends BaseActor with DataWriterClient {
   }
 
   def openState(tx: SseTx, future: Option[ListenableFuture[Unit]]): Receive = {
+
+      def stopEmitterAndSucceedPendingCheck(emitter: SseEmitter, results: List[CheckResult]): Unit = {
+        emitter.stopEmitting
+        succeedPendingCheck(results)
+      }
 
       def succeedPendingCheck(results: List[CheckResult]): Unit = {
         tx.check match {
@@ -120,12 +99,14 @@ class SseActor(sseName: String) extends BaseActor with DataWriterClient {
               val newSession = tx.session.update(newUpdates)
 
               tx.next ! newSession
-              val newTx = tx.copy(session = newSession, updates = Nil, check = None, pendingCheckSuccesses = Nil)
+              // todo check the start = nowMillis with an example
+              val newTx = tx.copy(session = newSession, updates = Nil, check = None, pendingCheckSuccesses = Nil, start = nowMillis)
               context.become(openState(newTx, future))
 
             } else {
               // add to pending updates
-              val newTx = tx.copy(updates = newUpdates, check = None, pendingCheckSuccesses = Nil)
+              // todo check the start = nowMillis with an example
+              val newTx = tx.copy(updates = newUpdates, check = None, pendingCheckSuccesses = Nil, start = nowMillis)
               context.become(openState(newTx, future))
             }
 
@@ -141,39 +122,38 @@ class SseActor(sseName: String) extends BaseActor with DataWriterClient {
 
     {
       case OnFuture(future) =>
-        logger.error("OnFuture")
-        logger.error(s"---------------- got the future for ${tx.session.userId} with ${future.hashCode()}")
+        logger.error(s"Associate the future #${future.hashCode} to the user #${tx.session.userId}")
         context.become(openState(tx, Some(future)))
 
-      case OnMessage(message, end, handler) =>
-        logger.error("OnMessage")
-        logger.error(s"OnMessage #${tx.session.userId}")
+      case OnMessage(message, end, emitter) =>
+        logger.error(s"Received message '$message' for user #${tx.session.userId}")
         import tx._
 
         tx.check match {
           case Some(c) =>
-            val msg = new String(message.getBodyPartBytes)
             implicit val cache = mutable.Map.empty[Any, Any]
 
             tx.check.foreach { check =>
-              val validation = check.check(msg, tx.session)
+              val validation = check.check(message, tx.session)
 
               validation match {
                 case Success(result) =>
                   val results = result :: tx.pendingCheckSuccesses
 
                   check.expectation match {
-                    case UntilCount(count) if count == results.length    => succeedPendingCheck(results)
-                    case ExpectedCount(count) if count == results.length => { handler.stopListening; succeedPendingCheck(results) }
+                    case UntilCount(count) if count == results.length                          => stopEmitterAndSucceedPendingCheck(emitter, results)
+                    case ExpectedCount(count) if count == results.length                       => stopEmitterAndSucceedPendingCheck(emitter, results)
+                    case ExpectedRange(range) if range.contains(tx.pendingCheckSuccesses.size) => stopEmitterAndSucceedPendingCheck(emitter, results)
                     case _ =>
                       // let's pile up
-                      val newTx2 = tx.copy(pendingCheckSuccesses = results)
-                      context.become(openState(newTx2, future))
+                      logRequest(session, requestName, OK, start, end) // todo check with an example
+                      val newTx = tx.copy(pendingCheckSuccesses = results, start = end)
+                      context.become(openState(newTx, future))
                   }
 
                 case Failure(error) =>
-                  val newTx2 = failPendingCheck(tx, error)
-                  context.become(openState(newTx2, future))
+                  val newTx = failPendingCheck(tx, error)
+                  context.become(openState(newTx, future))
               }
             }
 
@@ -183,63 +163,21 @@ class SseActor(sseName: String) extends BaseActor with DataWriterClient {
             context.become(openState(newTx, future))
         }
 
-      case SetCheck(requestName, check, next, session) =>
-        logger.error("SetCheck")
-        logger.debug(s"Setting check on Sse '$sseName'")
-        setCheck(tx, requestName, check, next, session, future)
-
-      case CancelCheck(requestName, next, session) =>
-        logger.error("CancelCheck")
-        logger.debug(s"Cancelling check on Sse '$sseName'")
-
-        val newTx = tx
-          .applyUpdates(session)
-          .copy(check = None, pendingCheckSuccesses = Nil)
-
-        context.become(openState(tx, future))
-        next ! newTx.session
-
-      case CheckTimeout(check) =>
-        logger.error("CheckTimeout")
-        logger.debug(s"Check on Sse '$sseName' timed out")
-
-        tx.check match {
-          case Some(`check`) =>
-            check.expectation match {
-              case ExpectedCount(count) if count == tx.pendingCheckSuccesses.size        => succeedPendingCheck(tx.pendingCheckSuccesses)
-              case ExpectedRange(range) if range.contains(tx.pendingCheckSuccesses.size) => succeedPendingCheck(tx.pendingCheckSuccesses)
-              case _ =>
-                val newTx = failPendingCheck(tx, "Check failed: Timeout")
-                context.become(openState(newTx, future))
-
-                if (check.blocking)
-                  // release blocked session
-                  newTx.next ! newTx.applyUpdates(newTx.session).session
-            }
-
-          case _ =>
-          // ignore outdated timeout
-        }
-
       case Reconciliate(requestName, next, session) =>
         logger.error("Reconciliate")
         logger.debug(s"Reconciliating sse '$sseName'")
         reconciliate(next, session)
 
       case Close(requestName, next, session) =>
-        logger.error("Close")
-        logger.error(s"Closing sse '$sseName' for ${session.userId} with ${future.hashCode}")
-        logger.debug(s"Closing sse '$sseName'")
+        logger.error(s"Closing sse '$sseName' for user #${session.userId} with future #${future.hashCode}")
 
-        if (future.isDefined) {
-          future.get.done
-        }
+        future.foreach(f => f.done)
 
         val newTx = failPendingCheck(tx, "Check didn't succeed by the time the sse was asked to closed")
           .applyUpdates(session)
           .copy(requestName = requestName, start = nowMillis, next = next)
 
-        logRequest(session, requestName, OK, tx.start, nowMillis)
+        logRequest(session, requestName, OK, nowMillis, nowMillis)
         next ! session.remove(sseName)
         context.stop(self)
 

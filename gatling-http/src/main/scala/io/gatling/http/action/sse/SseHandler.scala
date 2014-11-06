@@ -16,13 +16,13 @@ import io.gatling.http.ahc.SseTx
  */
 class SseHandler(tx: SseTx, sseActor: ActorRef) extends AsyncHandler[Unit]
     with AsyncHandlerExtensions
+    with SseEmitter
     with StrictLogging {
 
   private val done = new AtomicBoolean
   private var state: SseState = Opening
 
   override def onOpenConnection(): Unit = {
-    logger.error("onOpenConnection *************************************")
   }
 
   override def onPoolConnection(): Unit = {}
@@ -31,7 +31,6 @@ class SseHandler(tx: SseTx, sseActor: ActorRef) extends AsyncHandler[Unit]
 
   override def onConnectionOpen(): Unit = {
     state = Open
-    logger.error("onConnectionOpen *************************************")
   }
 
   override def onRetry(): Unit = {
@@ -40,20 +39,19 @@ class SseHandler(tx: SseTx, sseActor: ActorRef) extends AsyncHandler[Unit]
   }
 
   override def onSendRequest(request: scala.Any): Unit = {
-    logger.error("***********************" + request + "-" + tx.requestName)
-
     sseActor ! OnSend(tx)
   }
 
   override def onStatusReceived(responseStatus: HttpResponseStatus): STATE = {
-    logger.error("onStatusReceived ************************************* " + responseStatus + "--" + responseStatus.getStatusCode)
+    logger.error(s"status ${responseStatus.getStatusCode} received for sse '${tx.requestName}")
+
     responseStatus.getStatusCode match {
       case 200 =>
         CONTINUE
 
       case unexpected =>
         onThrowable(new HTTPException(unexpected) {
-          override def getMessage: String = s"Server returned http response with code $getStatusCode"
+          override def getMessage: String = s"Server returned http response with code ${responseStatus.getStatusCode}"
         })
         STATE.ABORT
     }
@@ -63,7 +61,9 @@ class SseHandler(tx: SseTx, sseActor: ActorRef) extends AsyncHandler[Unit]
 
   override def onBodyPartReceived(bodyPart: HttpResponseBodyPart): STATE = {
     if (!done.get) {
-      sseActor ! OnMessage(bodyPart, nowMillis, this)
+      val message = new String(bodyPart.getBodyPartBytes)
+
+      sseActor ! OnMessage(message, nowMillis, this)
       //      done.compareAndSet(false, true)
     }
     CONTINUE
@@ -105,7 +105,7 @@ class SseHandler(tx: SseTx, sseActor: ActorRef) extends AsyncHandler[Unit]
 
   }
 
-  def stopListening(): Unit = {
+  override def stopEmitting(): Unit = {
     done.compareAndSet(false, true)
   }
 }

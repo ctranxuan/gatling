@@ -12,7 +12,7 @@ import io.gatling.http.check.sse.SseCheck
 sealed trait SseEvent
 case class OnSend(tx: SseTx) extends SseEvent
 case class OnFailedOpen(tx: SseTx, errorMessage: String, time: Long) extends SseEvent
-case class OnMessage(message: HttpResponseBodyPart, time: Long, sseHandler: SseHandler) extends SseEvent
+case class OnMessage(message: String, time: Long, sseEmitter: SseEmitter) extends SseEvent
 case class OnThrowable(tx: SseTx, errorMessage: String, time: Long) extends SseEvent // FIXME consider using HttpEvent.OnThrowable instead
 case class CheckTimeout(check: SseCheck) extends SseEvent
 
