@@ -4,14 +4,14 @@ import akka.actor.ActorRef
 import com.ning.http.client.ListenableFuture
 import io.gatling.core.akka.BaseActor
 import io.gatling.core.check.CheckResult
-import io.gatling.core.result.message.{KO, OK, Status}
+import io.gatling.core.result.message.{ KO, OK, Status }
 import io.gatling.core.result.writer.DataWriterClient
 import io.gatling.core.session.Session
 import io.gatling.core.util.TimeHelper.nowMillis
-import io.gatling.core.validation.{Failure, Success}
+import io.gatling.core.validation.{ Failure, Success }
 import io.gatling.http.ahc.SseTx
-import io.gatling.http.check.ws.{ExpectedCount, ExpectedRange, UntilCount}
-import io.gatling.http.request.builder.sse.SseCheck
+import io.gatling.http.check.sse.SseCheck
+import io.gatling.http.check.ws.{ ExpectedCount, ExpectedRange, UntilCount }
 
 import scala.collection.mutable
 

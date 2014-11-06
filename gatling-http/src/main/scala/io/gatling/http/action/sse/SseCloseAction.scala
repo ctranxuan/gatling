@@ -4,7 +4,6 @@ import akka.actor.ActorRef
 import io.gatling.core.session.{ Expression, Session }
 import io.gatling.core.validation.Validation
 import io.gatling.http.action.RequestAction
-import io.gatling.http.request.builder.sse.Close
 
 /**
  * @author ctranxuan

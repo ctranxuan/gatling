@@ -1,6 +1,6 @@
 package io.gatling.http.check.sse
 
-import io.gatling.core.check.{Check, CheckResult}
+import io.gatling.core.check.{ Check, CheckResult }
 import io.gatling.core.session.Session
 import io.gatling.core.validation.Validation
 import io.gatling.http.check.ws.Expectation

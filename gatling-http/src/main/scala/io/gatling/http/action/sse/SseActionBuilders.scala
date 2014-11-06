@@ -5,8 +5,9 @@ import akka.actor.ActorRef
 import io.gatling.core.config.Protocols
 import io.gatling.core.session.Expression
 import io.gatling.http.action.HttpActionBuilder
+import io.gatling.http.check.sse.SseCheck
 import io.gatling.http.check.ws.WsCheck
-import io.gatling.http.request.builder.sse.{SseCheck, SseOpenAction, SseOpenRequestBuilder}
+import io.gatling.http.request.builder.sse.SseOpenRequestBuilder
 
 /**
  * @author ctranxuan

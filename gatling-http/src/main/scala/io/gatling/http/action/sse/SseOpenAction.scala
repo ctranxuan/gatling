@@ -4,11 +4,11 @@ import akka.actor.ActorDSL.actor
 import akka.actor.ActorRef
 import com.ning.http.client.Request
 import io.gatling.core.action.Interruptable
-import io.gatling.core.session.{Expression, Session}
+import io.gatling.core.session.{ Expression, Session }
 import io.gatling.core.util.TimeHelper.nowMillis
-import io.gatling.http.ahc.{HttpEngine, SseTx}
+import io.gatling.http.ahc.{ HttpEngine, SseTx }
+import io.gatling.http.check.sse.SseCheck
 import io.gatling.http.config.HttpProtocol
-import io.gatling.http.request.builder.sse.SseCheck
 
 /**
  * @author ctranxuan

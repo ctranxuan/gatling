@@ -1,9 +1,10 @@
 package io.gatling.http.action.sse
 
 import akka.actor.ActorRef
-import com.ning.http.client.{HttpResponseBodyPart, ListenableFuture}
+import com.ning.http.client.{ HttpResponseBodyPart, ListenableFuture }
 import io.gatling.core.session.Session
 import io.gatling.http.ahc.SseTx
+import io.gatling.http.check.sse.SseCheck
 
 /**
  * @author ctranxuan
