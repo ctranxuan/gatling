@@ -20,7 +20,7 @@ import java.util.concurrent.{ TimeUnit, Executors, ThreadFactory }
 
 import com.ning.http.client.providers.netty.NettyAsyncHttpProviderConfig.NettyWebSocketFactory
 import com.ning.http.client.providers.netty.ws.NettyWebSocket
-import io.gatling.http.action.sse.{ SseHandler, OnFuture }
+import io.gatling.http.action.sse.{ SseSource, SseHandler, OnSseSource }
 import io.gatling.http.check.sse.SseCheck
 import org.jboss.netty.channel.Channel
 import org.jboss.netty.channel.socket.nio.{ NioWorkerPool, NioClientBossPool, NioClientSocketChannelFactory }
@@ -292,13 +292,14 @@ class HttpEngine extends AkkaDefaults with StrictLogging {
     }
 
     try {
-      val handler = (new SseHandler(newTx, sseActor))
+      val handler = new SseHandler(newTx, sseActor)
       val future = client.executeRequest(newTx.request, handler)
 
-      sseActor ! OnFuture(future)
+      sseActor ! OnSseSource(new SseSource(future))
 
     } catch {
-      case e: Exception => ??? // FIXME
+      case e: Exception =>
+        sseActor ! io.gatling.http.action.sse.OnFailedOpen(newTx, e.getMessage, nowMillis)
     }
   }
 

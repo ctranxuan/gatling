@@ -1,7 +1,5 @@
 package io.gatling.http
 
-import scala.concurrent.duration._
-
 import io.gatling.core.Predef._
 import io.gatling.http.Predef._
 
@@ -11,17 +9,16 @@ import io.gatling.http.Predef._
 class SseCompileTest extends Simulation {
 
   val httpConf = http
-    .baseURL("http://localhost:8080")
-    .acceptHeader("text/event-stream")
-    //    .acceptLanguageHeader("en-US,en;q=0.5")
-    //    .acceptEncodingHeader("gzip, deflate")
-    .userAgentHeader("Mozilla/5.0 (Macintosh; Intel Mac OS X 10.8; rv:16.0) Gecko/20100101 Firefox/16.0")
-  //    .wsReconnect // FIXME
-  //    .wsMaxReconnects(3) // FIXME
+                 .baseURL("http://localhost:8080/app")
+                 .header("Accept", "text/event-stream")
+                 .doNotTrackHeader("1")
 
-  val scn = scenario("Sse")
-    .exec(sse("StockMarket").open("/stocks/prices") //          .check(// FIXME)
-    )
+  val scn = scenario(this.getClass.getSimpleName)
+            .exec(sse("sse")
+                  .get("/stocks/prices")
+                  .check(wsAwait.within(10).until(1).regex("""event: snapshot(.*)""").count.is(1)))
+            .pause(15)
+            .exec(sse("close").close())
 
   setUp(scn.inject(rampUsers(100) over 10)).protocols(httpConf)
 }

@@ -1,7 +1,6 @@
 package io.gatling.http.action.sse
 
 import akka.actor.ActorRef
-import com.ning.http.client.ListenableFuture
 import io.gatling.core.akka.BaseActor
 import io.gatling.core.check.CheckResult
 import io.gatling.core.result.message.{ KO, OK, Status }
@@ -31,19 +30,19 @@ class SseActor(sseName: String) extends BaseActor with DataWriterClient {
     }
   }
 
-  def initialState(future: Option[ListenableFuture[Unit]]): Receive = {
-    case OnFuture(future) =>
-      logger.error(s"Initiate state with future #${future.hashCode}")
-      context.become(initialState(Some(future)))
+  def initialState(sseSource: Option[SseSource]): Receive = {
+    case OnSseSource(sseSource) =>
+      logger.debug(s"Initiate state with sseSource #${sseSource.hashCode}")
+      context.become(initialState(Some(sseSource)))
 
     case OnSend(tx) =>
       import tx._
-      logger.error(s"sse '$requestName' opened and request sent")
+      logger.debug(s"sse request '$requestName' has been sent")
 
       val newSession = session.set(sseName, self)
       val newTx = tx.copy(session = newSession)
 
-      context.become(openState(newTx, future))
+      context.become(openState(newTx, sseSource))
       next ! newSession
 
     case OnFailedOpen(tx, message, end) =>
@@ -56,10 +55,10 @@ class SseActor(sseName: String) extends BaseActor with DataWriterClient {
 
   }
 
-  def openState(tx: SseTx, future: Option[ListenableFuture[Unit]]): Receive = {
+  def openState(tx: SseTx, sseSource: Option[SseSource]): Receive = {
 
-      def stopEmitterAndSucceedPendingCheck(emitter: SseEmitter, results: List[CheckResult]): Unit = {
-        emitter.stopEmitting
+      def stopForwarderAndSucceedPendingCheck(forwarder: SseForwarder, results: List[CheckResult]): Unit = {
+        forwarder.stopForward
         succeedPendingCheck(results)
       }
 
@@ -98,16 +97,17 @@ class SseActor(sseName: String) extends BaseActor with DataWriterClient {
               // apply updates and release blocked flow
               val newSession = tx.session.update(newUpdates)
 
-              tx.next ! newSession
               // todo check the start = nowMillis with an example
               val newTx = tx.copy(session = newSession, updates = Nil, check = None, pendingCheckSuccesses = Nil, start = nowMillis)
-              context.become(openState(newTx, future))
+              context.become(openState(newTx, sseSource))
+              logger.error(s"********************** succeedPendingCheck: $self with next ${newTx.next}")
+              newTx.next ! newSession
 
             } else {
               // add to pending updates
               // todo check the start = nowMillis with an example
               val newTx = tx.copy(updates = newUpdates, check = None, pendingCheckSuccesses = Nil, start = nowMillis)
-              context.become(openState(newTx, future))
+              context.become(openState(newTx, sseSource))
             }
 
           case _ =>
@@ -116,17 +116,17 @@ class SseActor(sseName: String) extends BaseActor with DataWriterClient {
 
       def reconciliate(next: ActorRef, session: Session): Unit = {
         val newTx = tx.applyUpdates(session)
-        context.become(openState(newTx, future))
+        context.become(openState(newTx, sseSource))
         next ! newTx.session
       }
 
     {
-      case OnFuture(future) =>
-        logger.error(s"Associate the future #${future.hashCode} to the user #${tx.session.userId}")
-        context.become(openState(tx, Some(future)))
+      case OnSseSource(sseSource) =>
+        logger.debug(s"Associate the sseSource #${sseSource.hashCode} to the user #${tx.session.userId}")
+        context.become(openState(tx, Some(sseSource)))
 
-      case OnMessage(message, end, emitter) =>
-        logger.error(s"Received message '$message' for user #${tx.session.userId}")
+      case OnMessage(message, end, forwarder) =>
+        logger.debug(s"Received message '$message' for user #${tx.session.userId}")
         import tx._
 
         tx.check match {
@@ -141,50 +141,43 @@ class SseActor(sseName: String) extends BaseActor with DataWriterClient {
                   val results = result :: tx.pendingCheckSuccesses
 
                   check.expectation match {
-                    case UntilCount(count) if count == results.length                          => stopEmitterAndSucceedPendingCheck(emitter, results)
-                    case ExpectedCount(count) if count == results.length                       => stopEmitterAndSucceedPendingCheck(emitter, results)
-                    case ExpectedRange(range) if range.contains(tx.pendingCheckSuccesses.size) => stopEmitterAndSucceedPendingCheck(emitter, results)
+                    case UntilCount(count) if count == results.length                          => stopForwarderAndSucceedPendingCheck(forwarder, results)
+                    case ExpectedCount(count) if count == results.length                       => stopForwarderAndSucceedPendingCheck(forwarder, results)
+                    case ExpectedRange(range) if range.contains(tx.pendingCheckSuccesses.size) => stopForwarderAndSucceedPendingCheck(forwarder, results)
                     case _ =>
                       // let's pile up
                       logRequest(session, requestName, OK, start, end) // todo check with an example
                       val newTx = tx.copy(pendingCheckSuccesses = results, start = end)
-                      context.become(openState(newTx, future))
+                      context.become(openState(newTx, sseSource))
                   }
 
                 case Failure(error) =>
                   val newTx = failPendingCheck(tx, error)
-                  context.become(openState(newTx, future))
+                  context.become(openState(newTx, sseSource))
               }
             }
 
           case None =>
             logRequest(session, requestName, OK, start, end)
             val newTx = tx.copy(start = end)
-            context.become(openState(newTx, future))
+            context.become(openState(newTx, sseSource))
         }
 
       case Reconciliate(requestName, next, session) =>
-        logger.error("Reconciliate")
         logger.debug(s"Reconciliating sse '$sseName'")
         reconciliate(next, session)
 
       case Close(requestName, next, session) =>
-        logger.error(s"Closing sse '$sseName' for user #${session.userId} with future #${future.hashCode}")
-
-        future.foreach(f => f.done)
+        logger.debug(s"Closing sse '$sseName' for user #${session.userId} with sseSource #${sseSource.hashCode}")
+        sseSource.foreach(s => s.close)
 
         val newTx = failPendingCheck(tx, "Check didn't succeed by the time the sse was asked to closed")
           .applyUpdates(session)
           .copy(requestName = requestName, start = nowMillis, next = next)
 
-        logRequest(session, requestName, OK, nowMillis, nowMillis)
-        next ! session.remove(sseName)
-        context.stop(self)
-
-      //        context.become(closingState(newTx))
+        context.become(closingState(newTx))
 
       case OnThrowable(tx, message, end) => {
-        logger.error("OnThrowable")
         import tx._
         logRequest(session, requestName, KO, start, end, Some(message))
 
@@ -194,20 +187,20 @@ class SseActor(sseName: String) extends BaseActor with DataWriterClient {
       }
 
       case unexpected =>
-        logger.error("unexpected")
-        logger.error(s"Discarding 1 unknown message $unexpected while in open state")
+        logger.error(s"Discarding unknown message $unexpected while in open state")
     }
   }
 
   def closingState(tx: SseTx): Receive = {
-    case OnMessage(message, end, _) =>
+    case OnClose =>
       import tx._
+      logger.error("================ OnClose: self #" + self + " with #" + next)
       logRequest(session, requestName, OK, start, nowMillis)
       next ! session.remove(sseName)
       context.stop(self)
 
     case unexpected =>
-      logger.error(s"Discarding 2 unknown message $unexpected while in closing state")
+      logger.error(s"Discarding unknown message $unexpected while in closing state")
   }
 
   private def logRequest(session: Session, requestName: String, status: Status, started: Long, ended: Long, errorMessage: Option[String] = None): Unit = {

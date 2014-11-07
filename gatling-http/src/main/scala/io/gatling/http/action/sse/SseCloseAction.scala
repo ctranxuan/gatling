@@ -11,7 +11,7 @@ import io.gatling.http.action.RequestAction
 class SseCloseAction(val requestName: Expression[String], sseName: String, val next: ActorRef) extends RequestAction with SseAction {
 
   def sendRequest(requestName: String, session: Session): Validation[Unit] = {
-    logger.error("SseCloseAction.sendRequest: ****************-" + session.userId)
+    logger.error(s"**** SseCloseAction.sendRequest: " + session.userId + "@" + self + " with next #" + next)
     for {
       sseActor <- fetchSse(sseName, session)
     } yield sseActor ! Close(requestName, next, session)

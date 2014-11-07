@@ -16,7 +16,7 @@ import io.gatling.http.ahc.SseTx
  */
 class SseHandler(tx: SseTx, sseActor: ActorRef) extends AsyncHandler[Unit]
     with AsyncHandlerExtensions
-    with SseEmitter
+    with SseForwarder
     with StrictLogging {
 
   private val done = new AtomicBoolean
@@ -39,11 +39,12 @@ class SseHandler(tx: SseTx, sseActor: ActorRef) extends AsyncHandler[Unit]
   }
 
   override def onSendRequest(request: scala.Any): Unit = {
+    logger.debug(s"Request ${request} has been sent by the http client")
     sseActor ! OnSend(tx)
   }
 
   override def onStatusReceived(responseStatus: HttpResponseStatus): STATE = {
-    logger.error(s"status ${responseStatus.getStatusCode} received for sse '${tx.requestName}")
+    logger.debug(s"Status ${responseStatus.getStatusCode} received for sse '${tx.requestName}")
 
     responseStatus.getStatusCode match {
       case 200 =>
@@ -64,13 +65,12 @@ class SseHandler(tx: SseTx, sseActor: ActorRef) extends AsyncHandler[Unit]
       val message = new String(bodyPart.getBodyPartBytes)
 
       sseActor ! OnMessage(message, nowMillis, this)
-      //      done.compareAndSet(false, true)
     }
     CONTINUE
   }
 
   override def onCompleted(): Unit = {
-    logger.error("---------------***** onCompleted")
+    sseActor ! OnClose
   }
 
   override def onThrowable(throwable: Throwable): Unit = {
@@ -91,7 +91,6 @@ class SseHandler(tx: SseTx, sseActor: ActorRef) extends AsyncHandler[Unit]
     else
       logger.info(s"Request '${tx.requestName}' failed for user ${tx.session.userId}: $errorMessage")
 
-    // todo
     state match {
       case Opening =>
         sseActor ! OnFailedOpen(tx, errorMessage, nowMillis)
@@ -105,7 +104,7 @@ class SseHandler(tx: SseTx, sseActor: ActorRef) extends AsyncHandler[Unit]
 
   }
 
-  override def stopEmitting(): Unit = {
+  override def stopForward(): Unit = {
     done.compareAndSet(false, true)
   }
 }

@@ -13,7 +13,7 @@ import io.gatling.http.config.HttpProtocol
 /**
  * @author ctranxuan
  */
-class SseOpenAction(
+class SseGetAction(
     requestName: Expression[String],
     sseName: String,
     request: Expression[Request],
@@ -23,17 +23,15 @@ class SseOpenAction(
 
   override def execute(session: Session): Unit = {
 
-      def open(tx: SseTx): Unit = {
-        logger.info(s"Opening sse '$sseName': Scenario '${session.scenarioName}', UserId #${session.userId}")
-
+      def get(tx: SseTx): Unit = {
+        logger.info(s"Opening and getting sse '$sseName': Scenario '${session.scenarioName}', UserId #${session.userId}")
         val sseActor = actor(context)(new SseActor(sseName))
-
         HttpEngine.instance.startSseTransaction(tx, sseActor)
       }
 
     for {
       requestName <- requestName(session)
       request <- request(session)
-    } yield open(SseTx(session, request, requestName, protocol, next, nowMillis, check = check))
+    } yield get(SseTx(session, request, requestName, protocol, next, nowMillis, check = check))
   }
 }
